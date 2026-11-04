@@ -1,12 +1,77 @@
 # Task Planner Agent
 
-A TypeScript CLI that investigates a local Git repository and turns a ticket into
-a technical plan with evidence, assumptions, questions, dependencies, risks, and
-validation criteria. It outputs JSON; the repository under analysis is read-only.
+CLI local que investiga um ticket em um repositório Git e cria um plano técnico com evidências, dúvidas, riscos e critérios de validação. O agente só lê o projeto; não implementa a tarefa nem executa comandos do projeto.
 
-## Installation
+## Instalar o comando localmente
 
-Requires Node.js 22 or later (prefer a supported LTS release), npm, and Git on PATH.
+Requisitos: Node.js 22 ou posterior, npm e Git no PATH. Na pasta deste agente, rode uma vez:
+
+```powershell
+npm ci
+npm run build
+npm link
+```
+
+Isso disponibiliza o comando `plan` no terminal sem instalar dependências nos projetos que serão analisados. Se o terminal não reconhecer `plan`, feche e abra o terminal e confira se a pasta global de executáveis do npm está no PATH. No Windows, `plan.cmd` também pode funcionar quando a política do PowerShell bloqueia scripts `.ps1`. Para remover o link: `npm unlink --global task-planner-agent`.
+
+## Primeiro uso
+
+Configure um perfil interativamente:
+
+```powershell
+plan setup
+```
+
+Escolha OpenAI ou um endpoint compatível, informe o ID do modelo e o nome da variável de ambiente que guardará a chave. Para OpenAI, por exemplo:
+
+```powershell
+$env:OPENAI_API_KEY = "sua-chave"
+```
+
+A chave não é salva. Os perfis ficam em `~/.task-planner/config.json`, fora dos repositórios. Para usar uma configuração em outro caminho, defina `PLANNER_CONFIG`. Arquivos `.env` não são carregados automaticamente.
+
+Em seguida, dentro de qualquer projeto Git:
+
+```powershell
+cd C:/projetos/minha-app
+plan ./ticket.md
+```
+
+O projeto é detectado pela pasta atual, inclusive se você estiver em uma subpasta. Para apontar outro projeto, use `--repo C:/projetos/outra-app`. O ticket deve ser um arquivo UTF-8. O comando mantém a autorização de envio explícita: acrescente `--allow-remote-model` para permitir o envio do ticket e dos trechos encontrados ao provedor.
+
+## Comandos úteis
+
+```powershell
+plan doctor                         # verifica perfil, chave e projeto atual
+plan --dry-run ./ticket.md          # prévia local, sem chamadas remotas
+plan ./ticket.md --allow-remote-model
+plan ./ticket.md --profile local --model outro-modelo --allow-remote-model
+plan ./ticket.md --json --allow-remote-model
+```
+
+No terminal interativo, o resultado é apresentado como relatório legível. Quando a saída é redirecionada, o comando emite JSON. Use `--json` para pedir JSON explicitamente:
+
+```powershell
+plan ./ticket.md --allow-remote-model --json > plan.json
+```
+
+`plan --help` lista as opções. `--repo` e `--ticket` continuam disponíveis para compatibilidade com o CLI anterior. `--inspect` também continua disponível como alias de prévia offline.
+
+## Provedores e modelos
+
+`plan setup` salva um perfil OpenAI ou um endpoint compatível com a API OpenAI, incluindo URL base, ID do modelo e nome da variável de ambiente para a chave. Um exemplo de endpoint local compatível seria `http://localhost:11434/v1`; use o endereço e as capacidades documentadas pelo serviço que estiver rodando. Endpoints remotos exigem HTTPS. HTTP só é aceito para localhost/loopback.
+
+O modo compatível usa Chat Completions. Isso não traduz protocolos nativos de Anthropic, Gemini ou outros serviços, e não garante que todo modelo aceite chamadas de ferramentas e saída estruturada. `--model` substitui o modelo somente naquela execução. `OPENAI_MODEL` pode substituir o modelo de um perfil OpenAI.
+
+## O que o agente lê
+
+Somente arquivos versionados pelo Git são candidatos; alterações locais em arquivos versionados podem ser lidas. Arquivos ocultos, dependências, builds, tipos fora da allowlist, symlinks, arquivos grandes, binários, conteúdo UTF-8 inválido e padrões de segredo conhecidos são bloqueados. A filtragem de segredos é conservadora, pode bloquear código legítimo e não identifica todos os dados sensíveis. Revise a prévia e envie apenas conteúdo que você tem autorização para compartilhar.
+
+As ferramentas de leitura e busca têm limites de tamanho, quantidade e tempo. O relatório registra limitações; referências são verificadas contra trechos realmente retornados pelas ferramentas, mas isso não prova que a interpretação do modelo esteja correta. Revise o plano antes de implementar.
+
+SDK tracing está desabilitado e chamadas usam `store: false`; isso não substitui as políticas de retenção do provedor. O comando não faz chamadas remotas no `--dry-run` ou `--inspect`.
+
+## Desenvolvimento
 
 ```powershell
 npm ci
@@ -15,144 +80,12 @@ npm test
 npm run build
 ```
 
-## Try it offline
+`npm test` cobre ferramentas de repositório, limites, privacidade, validação das evidências, CLI offline e execução do SDK com modelo roteirizado offline. Isso valida integração e comportamento determinístico, não a qualidade de raciocínio de um modelo real.
 
-Create a temporary copy of the fixture with its own Git index. The fixture source
-is versioned in this project; the script avoids creating a nested `.git` directory.
-
-```powershell
-$fixture = (npm run --silent fixture | ConvertFrom-Json).repo
-npm run --silent dev -- --repo "$fixture" --ticket ./examples/export-orders.md --inspect
-```
-
-`--inspect` validates the ticket, Git root, and allowed names, paths, and sizes
-without importing the SDK or making model calls. Binary content and files with
-secrets are blocked during reads and searches, so `indexedFiles` counts candidates,
-not files whose contents have already been approved. The temporary fixture remains
-available for later commands.
-
-## Generate a plan
-
-Set `OPENAI_API_KEY` in your terminal environment. Do not store the key in this
-repository. `OPENAI_MODEL` is optional; if omitted, the installed SDK version's
-default is used. This project does not load `.env` files automatically.
-
-```powershell
-npm run --silent dev -- --repo "$fixture" --ticket ./examples/export-orders.md --allow-remote-model
-```
-
-For a real project, set `--repo` to the **root** of the Git working tree and
-`--ticket` to a UTF-8 file. Only tracked files are candidates; local changes to
-those files are read even if they are uncommitted. A repository with no tracked
-files provides no useful context.
-
-Run the compiled version and redirect its output to JSON:
-
-```powershell
-node dist/src/index.js --repo "$fixture" --ticket ./examples/export-orders.md --allow-remote-model > plan.json
-```
-
-Use `npm run --silent` when redirecting stdout to avoid npm's header. Errors go
-to stderr and exit with code 1 without publishing a partial report. `--format json`
-is optional; other formats are rejected. `--help` displays usage. Ctrl+C cancels
-a remote run.
-
-## Architecture
-
-```text
-src/index.ts                    arguments, offline mode, and authorization
-src/ticket.ts                   bounded UTF-8 reading
-src/repository/git-index.ts     git ls-files without a shell
-src/repository/safe-reader.ts   paths, symlinks, file types, secrets, and reading
-src/repository/repository.ts    listing/search/windows, budgets, and viewed evidence
-src/tools/index.ts              three Agents SDK function tools
-src/agent.ts                    single agent, timeout, and structured output
-src/schemas/planning-report.ts  Zod contract
-src/validation/evidence.ts      limited factual validation and plan consistency
-skills/technical-task-planning/ procedure explicitly loaded into the prompt
-tests/                          tests and orders fixture
-scripts/evaluate.ts             remote evaluation of three tickets
-```
-
-The SDK controls the loop; deterministic functions control filesystem access and
-validation. Zod validates the structure. Evidence must refer to content returned
-by tools: a listed but unread file cannot support a finding. Excerpts must be
-literal substrings of a single line, with no whitespace normalization. The
-validator rereads cited files and rejects changes made during the investigation.
-Reports marked `ready` are rejected if they contain blocking questions or invalid
-dependencies between steps.
-
-A single agent, literal search, and progressive context keep the implementation
-small and auditable. There is no model shell, ticket implementation, web interface,
-external ticket integration, persistent RAG, or multi-agent workflow.
-
-## Security and limits
-
-`--allow-remote-model` declares that you are authorized to send the ticket and
-selected excerpts to the provider. Use only code that complies with your
-contractual and privacy policies. SDK tracing is disabled globally and in the
-runner; calls use `store: false`. This does not guarantee zero provider retention:
-your account policies still apply.
-
-Absolute paths, traversal, symlinks/junctions, untracked files, hidden files,
-dependencies, build outputs, and types outside the allowlist are blocked. The
-reader also rejects binary content, invalid UTF-8, and recognized secret patterns.
-Detection is conservative, may produce false positives, and does not detect every
-secret. Tickets and repository content are untrusted data, never instructions to
-expand permissions. Tool failures stop the run; they do not produce a complete plan.
-
-Limits are centralized in `src/config.ts`:
-
-| Resource | Limit |
-|---|---:|
-| Ticket | 20 KB |
-| File | 100 KB |
-| Cumulative reads | 4 MB per run |
-| Search | 500 files / 1 MB per call |
-| Listing / search results | 100 / 30 |
-| Read window | 160 lines |
-| Serialized tool response | 20 KB |
-| Tool calls / model turns | 80 / 12 |
-| Remote run | 180 seconds |
-
-Failed reads also consume the budget. Validation rereads count toward the total
-limit. Truncations and excluded files are recorded in the plan's limitations.
-
-## Validation and evaluation
-
-`npm test` covers path isolation, junctions/symlinks, secrets, binary content,
-UTF-8, limits, offline CLI behavior, authorization, invented references, changed
-content, plan consistency, and the real SDK loop with an **offline scripted model**.
-That model verifies integration, not an LLM's reasoning ability.
+Para avaliar com tickets de exemplo, configure uma credencial e rode:
 
 ```powershell
 npm run --silent eval -- --allow-remote-model > evaluation.json
 ```
 
-The command uses a temporary fixture, runs the export, performance, and
-notification scenarios, validates evidence, and records latency, coverage, and
-token counts when provided by the SDK. It requires an API key and makes billable
-calls. Monetary cost is not estimated automatically. See [the rubric and status](docs/evaluation.md).
-
-**Status:** implementation, typecheck, offline tests, and build have been validated.
-Evaluation with a live LLM is pending: no API key was configured at handoff. There
-is no quality score until the real plans receive human review.
-
-## Known limitations
-
-- Correct references do not prove that the model's interpretation is true. Human
-  review is still required before implementing a plan.
-- Literal search may miss indirect relationships, aliases, or code in excluded
-  file types. No matches do not prove that functionality is absent.
-- The working tree is not an immutable snapshot. Checks detect common changes but
-  are not a sandbox against a hostile process modifying the filesystem concurrently.
-  Use a stable, trusted copy of the project.
-- Secret filtering may block legitimate configuration code and does not guarantee
-  removal of all sensitive data.
-- No quality or time savings have yet been demonstrated on real projects.
-
-Next: run the three scenarios with credentials, review the rubric, and refine
-discovery and prompts based on observed errors before expanding the scope.
-
-Integration reference: [OpenAI Agents SDK — Agent definitions](https://developers.openai.com/api/docs/guides/agents/define-agents).
-Signatures were also checked against the installed SDK types pinned by the lockfile.
+Essa avaliação faz chamadas potencialmente cobradas. Consulte [a rubrica](docs/evaluation.md); a qualidade de planos reais ainda requer avaliação humana.

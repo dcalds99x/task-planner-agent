@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { Agent, Runner, setTracingDisabled, type Model } from '@openai/agents';
-import { LIMITS, PlannerError, requireRemoteAuthorization } from './config.js';
+import { Agent, OpenAIProvider, Runner, setDefaultModelProvider, setTracingDisabled, type Model } from '@openai/agents';
+import { LIMITS, localEndpoint, PlannerError, requireRemoteAuthorization, type PlannerProfile } from './config.js';
 import type { Repository } from './repository/repository.js';
 import { hasKnownSecret } from './repository/safe-reader.js';
 import { planningReportSchema } from './schemas/planning-report.js';
@@ -23,11 +23,14 @@ export function createPlannerAgent(repository: Repository, model: string | Model
   });
 }
 
-export async function runTaskPlanner(ticket: string, repository: Repository, allowRemoteModel: boolean, signal?: AbortSignal, onUsage?: (usage: UsageMetrics) => void) {
-  requireRemoteAuthorization(allowRemoteModel);
+export async function runTaskPlanner(ticket: string, repository: Repository, allowRemoteModel: boolean, signal?: AbortSignal, onUsage?: (usage: UsageMetrics) => void, profile?: PlannerProfile) {
+  const keyEnv = profile?.apiKeyEnv ?? 'OPENAI_API_KEY';
+  requireRemoteAuthorization(allowRemoteModel, keyEnv, profile ? localEndpoint(profile) : false);
   if (hasKnownSecret(ticket)) throw new PlannerError('Ticket blocked by secret-content screening');
+  if (profile?.provider === 'compatible') setDefaultModelProvider(new OpenAIProvider({ apiKey: process.env[keyEnv] || (localEndpoint(profile) ? 'local' : undefined), baseURL: profile.baseURL, useResponses: false }));
+  else if (profile?.provider === 'openai') setDefaultModelProvider(new OpenAIProvider({ apiKey: process.env[keyEnv] }));
   setTracingDisabled(true);
-  const agent = createPlannerAgent(repository);
+  const agent = createPlannerAgent(repository, profile?.model || process.env.OPENAI_MODEL?.trim());
   const runner = new Runner({ tracingDisabled: true });
   const overview = repository.listFiles('', 50);
   const abort = AbortSignal.timeout(LIMITS.timeoutMs);
