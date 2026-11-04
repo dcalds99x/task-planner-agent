@@ -1,0 +1,29 @@
+{
+  "name": "task-planner-agent",
+  "version": "0.1.0",
+  "description": "Evidence-backed engineering planning with read-only repository tools",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/src/index.js",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "fixture": "tsx scripts/create-fixture.ts",
+    "eval": "tsx scripts/evaluate.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "@openai/agents": "^0.21.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
